@@ -9,6 +9,7 @@ test1 = TestCase (assertEqual "\\f g b -> (g (f b))" (Just t) (inferType I.empty
         t = TApp (TApp TBool TBool) (TApp (TApp TBool TBool) (TApp TBool TBool))
 
 -- pattern matching lambda to make this work?
+-- YL: see Xie's paper: Let arguments go first
 test2 = TestCase (assertEqual "(\\x -> x) true" Nothing (inferType I.empty f))
   where f :: Expr
         f = (EApp (ELam 0 (EVar 0)) ETrue)

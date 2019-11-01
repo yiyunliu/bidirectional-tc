@@ -24,6 +24,8 @@ dependencies:
 - bound
 - recursion-schemes
 - containers
+- mtl
+- lens
 library:
   source-dirs: src
 
