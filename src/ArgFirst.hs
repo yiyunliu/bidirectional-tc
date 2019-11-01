@@ -76,12 +76,18 @@ eId = ELam 0 (EVar 0)
 eIdAnn :: Expr
 eIdAnn = ELamAnn 0 (TForall 0 (TApp (TVar 0) (TVar 0))) (EVar 0)
 
+eIdInt :: Expr
+eIdInt = ELamAnn 0 TInt (EVar 0)
+
 -- | Church encoding of 1 and 2
 eCOne :: Expr
 eCOne = ELam 0 (ELam 1 (EApp (EVar 0) (EVar 1)))
 
 eCTwo :: Expr
 eCTwo = ELam 0 (ELam 1 (EApp (EVar 0) (EApp (EVar 0) (EVar 1))))
+
+eCTwoInt :: Expr
+eCTwoInt = ELamAnn 0 (TApp TInt TInt) (ELamAnn 1 TInt (EApp (EVar 0) (EApp (EVar 0) (EVar 1))))
 
 subst :: Subs -> EMonoType -> EMonoType
 subst subs t = go t
@@ -144,6 +150,11 @@ tftv t = runReader (act t) []
 tgen :: TCtx -> EType -> EType
 tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
 
+
+-- infer :: Expr -> Maybe EType
+-- infer e = maximum 
+
+
 inferType ::
      (Monoid e, MonadError e m, MonadState Int m)
   => TCtx
@@ -172,12 +183,15 @@ inferType ctx actx e
   , a:actx' <- actx = do
     b <- isSubtype a t
     unless b (throwError mempty)
-    TApp a <$> inferType (I.insert i t ctx) actx e'
+    TApp a <$> inferType (I.insert i t ctx) actx' e'
   -- T-APP
   | EApp e0 e1 <- e = do
     a <- inferType ctx [] e1
     let b = tgen ctx a
-    inferType ctx (b : actx) e0
+    tp <- inferType ctx (b : actx) e0
+    let TApp _ c = tp
+    pure c
+
 
 isSubtype :: (MonadState Int m) => EType -> EType -> m Bool
 isSubtype e0 e1
