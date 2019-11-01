@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
@@ -10,17 +11,19 @@ module ArgFirst where
 import Control.Applicative
 import Control.Applicative
 import Control.Category
-import Control.Lens
+import Control.Lens hiding (para)
 import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Functor.Foldable (Corecursive(..), Fix(..), cata, cataA, para)
+import Data.Functor.Foldable.TH
 import qualified Data.IntMap as I
 import qualified Data.List as L
 import Data.Maybe
 import Data.Monoid
+import Data.Text.Prettyprint.Doc
 import Prelude hiding ((.), id)
 
 type Subs = [(Int, EMonoType)]
@@ -37,6 +40,7 @@ data Expr
          Expr
   deriving (Show, Eq)
 
+
 data EType
   = TInt
   | TApp EType
@@ -52,6 +56,32 @@ data EMonoType
           EMonoType
   | MTVar Int
   deriving (Show, Eq)
+
+makeBaseFunctor ''Expr
+makeBaseFunctor ''EType
+makeBaseFunctor ''EMonoType
+
+instance Pretty EType where
+  pretty = para f
+    where f TIntF = "int"
+          f (TAppF (tt,t0) (_, t1))
+            | isAtom tt = t0 <+> "->" <+> t1
+            | otherwise = enclose "(" ")" t0 <+> "->" <+> t1
+          f (TForallF i (_,t)) = "∀" <+> ("t" <> pretty i) <+> "." <+> enclose "(" ")" t
+          f (TVarF i) = pretty ("t" ++ show i)
+          isAtom TInt = True
+          isAtom (TVar _) = True
+          isAtom _ = False
+
+instance Pretty Expr where
+  pretty = cata f
+    where f (EVarF i) = pretty ("x" ++ show i)
+          f (EIntF i) = pretty i
+          f (ELamF i e) = enclose "(" ")" ("λ" <+> enclose "[" "]" ("x" <> pretty i) <+> e)
+          f (ELamAnnF i t e) = enclose "(" ")" ("λ" <+> enclose "[" "]" ("x" <> pretty i <+> ":" <+> pretty t) <+> e)
+          f (EAppF e0 e1) = enclose "(" ")" (e0 <+> e1)
+
+
 
 -- | prism that goes back and forth between types and mono types
 typeMono :: Prism' EType EMonoType
@@ -135,102 +165,103 @@ freshVar = do
   modify (+ 1)
   pure i
 
--- efv :: Expr -> [Int]
--- efv _ = _
-gftv :: TCtx -> [Int]
-gftv = join . over mapped tftv . toListOf (folded . _2) . I.toList
-
-tftv :: EType -> [Int]
-tftv t = runReader (act t) []
-  where
-    act t
-      | TVar i <- t = do
-        b <- asks (L.elem i)
-        pure
-          (if b
-             then []
-             else [i])
-      | TApp t0 t1 <- t = liftA2 (++) (act t0) (act t1)
-      | TForall i t0 <- t = local (i :) (act t0)
-      | otherwise = pure []
-
--- T-GEN
-tgen :: TCtx -> EType -> EType
-tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
 
 
--- infer :: Expr -> Maybe EType
--- infer e = maximum 
+-- gftv :: TCtx -> [Int]
+-- gftv = join . over mapped tftv . toListOf (folded . _2) . I.toList
+
+-- tftv :: EType -> [Int]
+-- tftv t = runReader (act t) []
+--   where
+--     act t
+--       | TVar i <- t = do
+--         b <- asks (L.elem i)
+--         pure
+--           (if b
+--              then []
+--              else [i])
+--       | TApp t0 t1 <- t = liftA2 (++) (act t0) (act t1)
+--       | TForall i t0 <- t = local (i :) (act t0)
+--       | otherwise = pure []
+
+-- -- T-GEN
+-- tgen :: TCtx -> EType -> EType
+-- tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
+
+
+-- -- infer :: Expr -> Maybe EType
+-- -- infer e = maximum 
 
 
 
-inferType ::
-     (Monoid e, MonadError e m, MonadState Int m, MonadFail m)
-  => TCtx
-  -> ACtx
-  -> Expr
-  -> m EType
-inferType ctx actx e
-  -- T-Var
-  | EVar i <- e
-  , Just a <- I.lookup i ctx = appSubtype actx a
-  -- T-INT
-  | EInt i <- e = pure TInt
-  -- T-LAM
-  | ELam i e' <- e
-  , a:actx' <- actx = TApp a <$> inferType (I.insert i a ctx) actx' e'
-  -- T-LAM2
-  | ELam i e' <- e
-  -- guessing a random monotype
-   = TApp TInt <$> inferType (I.insert i TInt ctx) actx e'
-  -- T-LAMANN1
-  | ELamAnn i t e' <- e
-  , [] <- actx
-  -- T-LAMANN2
-   = TApp t <$> inferType (I.insert i t ctx) actx e'
-  | ELamAnn i t e' <- e
-  , a:actx' <- actx = do
-    b <- isSubtype a t
-    unless b (throwError mempty)
-    TApp a <$> inferType (I.insert i t ctx) actx' e'
-  -- T-APP
-  | EApp e0 e1 <- e = do
-    a <- inferType ctx [] e1
-    let b = tgen ctx a
-    TApp _ c <- inferType ctx (b : actx) e0
-    pure c
+-- inferType ::
+--      (Monoid e, MonadError e m, MonadState Int m, MonadFail m)
+--   => TCtx
+--   -> ACtx
+--   -> Expr
+--   -> Subs
+--   -> m (EType, Subs)
+-- inferType ctx actx e
+--   -- T-Var
+--   | EVar i <- e
+--   , Just a <- I.lookup i ctx = appSubtype actx a
+--   -- T-INT
+--   | EInt i <- e = pure TInt
+--   -- T-LAM
+--   | ELam i e' <- e
+--   , a:actx' <- actx = TApp a <$> inferType (I.insert i a ctx) actx' e'
+--   -- T-LAM2
+--   | ELam i e' <- e
+--   -- guessing a random monotype
+--    = TApp TInt <$> inferType (I.insert i TInt ctx) actx e'
+--   -- T-LAMANN1
+--   | ELamAnn i t e' <- e
+--   , [] <- actx
+--   -- T-LAMANN2
+--    = TApp t <$> inferType (I.insert i t ctx) actx e'
+--   | ELamAnn i t e' <- e
+--   , a:actx' <- actx = do
+--     b <- isSubtype a t
+--     unless b (throwError mempty)
+--     TApp a <$> inferType (I.insert i t ctx) actx' e'
+--   -- T-APP
+--   | EApp e0 e1 <- e = do
+--     a <- inferType ctx [] e1
+--     let b = tgen ctx a
+--     TApp _ c <- inferType ctx (b : actx) e0
+--     pure c
 
 
-isSubtype :: (MonadState Int m) => EType -> EType -> m Bool
-isSubtype e0 e1
-  -- S-INT
-  | TInt <- e0
-  , TInt <- e1 = pure True
-  -- S-VAR
-  | TVar i <- e0
-  , TVar i' <- e1 = pure (i == i')
-  -- S-FORALLR
-  | TForall i e1' <- e1
-  , not (L.elem i (tftv e1')) = isSubtype e0 e1'
-  -- S-FORALLL
-  -- guessing Int
-  | TForall i e0' <- e0 = isSubtype (substP [(i, MTInt)] e0') e1
-  | TApp t0 t1 <- e0
-  , TApp t0' t1' <- e1 = liftA2 (&&) (isSubtype t0' t0) (isSubtype t1 t1')
-  | otherwise = pure False
+-- isSubtype :: (MonadState Int m) => EType -> EType -> Subs -> m (Bool, Subs)
+-- isSubtype e0 e1
+--   -- S-INT
+--   | TInt <- e0
+--   , TInt <- e1 = pure True
+--   -- S-VAR
+--   | TVar i <- e0
+--   , TVar i' <- e1 = pure (i == i')
+--   -- S-FORALLR
+--   | TForall i e1' <- e1
+--   , not (L.elem i (tftv e1')) = isSubtype e0 e1'
+--   -- S-FORALLL
+--   -- guessing Int
+--   | TForall i e0' <- e0 = isSubtype (substP [(i, MTInt)] e0') e1
+--   | TApp t0 t1 <- e0
+--   , TApp t0' t1' <- e1 = liftA2 (&&) (isSubtype t0' t0) (isSubtype t1 t1')
+--   | otherwise = pure False
 
-appSubtype ::
-     (Monoid e, MonadError e m, MonadState Int m) => ACtx -> EType -> m EType
-appSubtype actx t
-  -- S-EMPTY
-  | [] <- actx = pure t
-  -- S-FUN2
-  | a:actx' <- actx
-  , TApp t0 t1 <- t = do
-    b <- isSubtype a t0
-    unless b (throwError mempty)
-    TApp a <$> appSubtype actx' t1
-  -- S-FORALL2
-  | _:_ <- actx
-  , TForall i t1 <- t = appSubtype actx (substP [(i, MTInt)] t1)
-  | otherwise = throwError mempty
+-- appSubtype ::
+--      (Monoid e, MonadError e m, MonadState Int m) => ACtx -> EType -> Subs -> m (EType, Subs)
+-- appSubtype actx t
+--   -- S-EMPTY
+--   | [] <- actx = pure t
+--   -- S-FUN2
+--   | a:actx' <- actx
+--   , TApp t0 t1 <- t = do
+--     b <- isSubtype a t0
+--     unless b (throwError mempty)
+--     TApp a <$> appSubtype actx' t1
+--   -- S-FORALL2
+--   | _:_ <- actx
+--   , TForall i t1 <- t = appSubtype actx (substP [(i, MTInt)] t1)
+--   | otherwise = throwError mempty
