@@ -12,6 +12,7 @@ import Control.Applicative
 import Control.Category
 import Control.Lens
 import Control.Monad
+import Control.Monad.Fail
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
@@ -73,8 +74,15 @@ type ACtx = [EType]
 eId :: Expr
 eId = ELam 0 (EVar 0)
 
+realId :: Expr
+realId = EApp (ELamAnn 0 (TForall 0 (TVar 0)) (EVar 0)) (ELam 0 (EVar 0))
+
 eIdAnn :: Expr
 eIdAnn = ELamAnn 0 (TForall 0 (TApp (TVar 0) (TVar 0))) (EVar 0)
+
+-- eIdAnn' :: Expr
+-- eIdAnn' = ELamAnn 0 (TForall 0 (TApp (TVar 0) (TVar 0))) (EVar 0)
+
 
 eIdInt :: Expr
 eIdInt = ELamAnn 0 TInt (EVar 0)
@@ -155,8 +163,9 @@ tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
 -- infer e = maximum 
 
 
+
 inferType ::
-     (Monoid e, MonadError e m, MonadState Int m)
+     (Monoid e, MonadError e m, MonadState Int m, MonadFail m)
   => TCtx
   -> ACtx
   -> Expr
@@ -188,8 +197,7 @@ inferType ctx actx e
   | EApp e0 e1 <- e = do
     a <- inferType ctx [] e1
     let b = tgen ctx a
-    tp <- inferType ctx (b : actx) e0
-    let TApp _ c = tp
+    TApp _ c <- inferType ctx (b : actx) e0
     pure c
 
 
