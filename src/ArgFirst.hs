@@ -285,22 +285,22 @@ tftv t = runReader (act t) []
 -- T-GEN
 tgen :: TCtx -> EType -> EType
 tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
--- -- | alpha conversion for EType
--- refreshBody :: Int -> Int -> EType -> EType
--- refreshBody binder freshId = para f
---   where f TIntF = TInt
---         f (TVarF i)
---           | i == binder
---           = TVar freshId
---           | otherwise
---           = TVar i
---         f (TForallF i (old,e0))
---           | i == binder
---           = TForall i old
---           | otherwise
---           = TForall i e0
---         f (TAppF (_,e0) (_,e1))
---           = TApp e0 e1
+-- | alpha conversion for EType
+etAlpha :: Int -> Int -> EType -> EType
+etAlpha binder freshId = para f
+  where f TIntF = TInt
+        f (TVarF i)
+          | i == binder
+          = TVar freshId
+          | otherwise
+          = TVar i
+        f (TForallF i (old,e0))
+          | i == binder
+          = TForall i old
+          | otherwise
+          = TForall i e0
+        f (TAppF (_,e0) (_,e1))
+          = TApp e0 e1
 -- inferType ::
 --      (Monoid e, MonadError e m, MonadState Int m, MonadFail m)
 --   => TCtx
@@ -338,42 +338,74 @@ tgen ctx t = L.foldr TForall t (tftv t L.\\ gftv ctx)
 --     let b = tgen ctx a
 --     (TApp _ c, subs'') <- inferType ctx (b : actx) e0 subs'
 --     pure (c, subs'')
--- isSubtype :: (MonadState Int m) => EType -> EType -> Subs -> m (Bool, Subs)
--- isSubtype e0 e1 subs
---   -- S-INT
---   | TInt <- e0
---   , TInt <- e1 = pure (True, subs)
---   -- S-VAR
---   | TVar i <- e0
---   , TVar i' <- e1 = pure (i == i', subs)
---   -- S-FORALLR
---   | TForall i e1' <- e1
---   -- This version is wrong
---   -- , not (L.elem i (tftv e1')) = isSubtype e0 e1'
---   -- S-FORALLL
---   -- guessing Int
---   = do a <- freshVar
---        isSubtype e0 e1' subs
---   | TForall i e0' <- e0
---   = isSubtype (substP [(i, MTInt)] e0') e1 subs
---   | TApp t0 t1 <- e0
---   , TApp t0' t1' <- e1 = do
---       (b0, subs') <- isSubtype t0' t0 subs
---       (b1, subs'') <- isSubtype t1 t1' subs
---       pure ((b0 && b1), subs'')
---   | otherwise = pure (False, subs)
--- appSubtype ::
---      (Monoid e, MonadError e m, MonadState Int m) => ACtx -> EType -> Subs -> m (EType, Subs)
--- appSubtype actx t subs
---   -- S-EMPTY
---   | [] <- actx = pure t
---   -- S-FUN2
---   | a:actx' <- actx
---   , TApp t0 t1 <- t = do
---     b <- isSubtype a t0
---     unless b (throwError mempty)
---     TApp a <$> appSubtype actx' t1
---   -- S-FORALL2
---   | _:_ <- actx
---   , TForall i t1 <- t = appSubtype actx (substP [(i, MTInt)] t1)
---   | otherwise = throwError mempty
+isSubtype :: (MonadState InferEnv m, Monoid e, MonadError e m) => EType -> EType -> m ()
+isSubtype e0 e1
+  -- S-INT
+  | TInt <- e0
+  , TInt <- e1 = pure ()
+  -- S-VAR
+  | TVar i <- e0
+  , TVar i' <- e1
+  , i == i'
+  = pure ()
+  -- S-FORALLR
+  | TForall i e1' <- e1
+  = do a <- freshVar
+       let e1fb = etAlpha i a e1'
+       isSubtype e0 e1fb
+  -- S-FORALLL
+  | TForall i e0' <- e0
+  = do iF <- freshVar
+       -- refresh the type variable before opening
+       let e0'' = substP [(i, MTVar iF)] e0'
+       -- extend the substitution environment
+       subs %= ((iF, MTVar iF):)
+       isSubtype e0'' e1
+       use (subs . to (lookupOf folded iF)) >>=
+         \case Nothing -> throwError mempty
+               Just mt -> subs %= elimFVar iF mt
+  | TApp t0 t1 <- e0
+  , TApp t0' t1' <- e1 = do
+      isSubtype t0' t0 
+      isSubtype t1 t1'
+  | otherwise = unify e0 e1
+
+-- -- | eliminate the flexible variable
+-- elimFVar :: Int -> Subs -> Subs
+-- elimFVar i s = case (s & lookupOf folded i :: Maybe EMonoType) of
+--   Nothing -> s
+--   Just t -> s ^.. folded.filtered (^. _1 . to (/= i))  ^. to (subcomp [(i,t)])
+
+-- | eliminate a flexible variable
+elimFVar :: Int -> EMonoType -> Subs -> Subs
+elimFVar i t s = s ^.. folded.filtered (^. _1 . to (/= i))  ^. to (subcomp [(i,t)])
+
+-- | eliminate a flexible variable from a type
+-- it should enforce the post condition that there is no i in the return value
+elimFVarType :: Int -> EMonoType -> EType -> EType
+elimFVarType i mt t = substP [(i,mt)] t
+
+
+appSubtype ::
+     (Monoid e, MonadError e m, MonadState InferEnv m) => ACtx -> EType -> m EType
+appSubtype actx t
+  -- S-EMPTY
+  | [] <- actx = pure t
+  -- S-FUN2
+  | a:actx' <- actx
+  , TApp t0 t1 <- t = do
+    isSubtype a t0
+    TApp a <$> appSubtype actx' t1
+  -- S-FORALL2
+  | _:_ <- actx
+  , TForall i t1 <- t = do
+      iF <- freshVar
+       -- refresh the type variable before opening
+      let t2 = substP [(i, MTVar iF)] t1
+       -- extend the substitution environment
+      subs %= ((iF, MTVar iF):)
+      tt <- appSubtype actx t2  -- appSubtype actx (substP [(i, MTInt)] t1)
+      use (subs . to (lookupOf folded iF)) >>=
+        \case Nothing -> throwError mempty
+              Just mt -> do {subs %= elimFVar iF mt; pure (elimFVarType iF mt tt)}
+  | otherwise = throwError mempty
