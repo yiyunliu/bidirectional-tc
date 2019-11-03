@@ -70,8 +70,7 @@ instance Pretty EType where
       f (TAppF (tt, t0) (_, t1))
         | isAtom tt = t0 <+> "->" <+> t1
         | otherwise = enclose "(" ")" t0 <+> "->" <+> t1
-      f (TForallF i (_, t)) =
-        "∀" <+> ("t" <> pretty i) <+> "." <+> t
+      f (TForallF i (_, t)) = "∀" <+> ("t" <> pretty i) <+> "." <+> t
       f (TVarF i) = pretty ("t" ++ show i)
       isAtom TInt = True
       isAtom (TVar _) = True
@@ -137,8 +136,6 @@ eCTwoInt =
     (TApp TInt TInt)
     (ELamAnn 1 TInt (EApp (EVar 0) (EApp (EVar 0) (EVar 1))))
 
-
-
 subst :: Subs -> EMonoType -> EMonoType
 subst subs t = go t
   where
@@ -150,12 +147,10 @@ substP :: Subs -> EType -> EType
 substP subs t = go t
   where
     go t@(TVar i) = maybe t id (subs' ^. at i)
-    go (TForall i t) =
-      TForall i (substP (subs & sans i) t)
+    go (TForall i t) = TForall i (substP (subs & sans i) t)
     go (TApp t t') = TApp (go t) (go t')
     go TInt = TInt
     subs' = over mapped (^. re typeMono) subs
-
 
 data InferEnv = IEnv
   { _subs :: Subs
@@ -174,20 +169,19 @@ isMetaVarM i = use $ subs . at i
 
 -- | v == v in subs
 isUnboundMetaVar :: MonadState InferEnv m => Int -> m Bool
-isUnboundMetaVar i =
-  use $ subs . at i . to (anyOf folded (== MTVar i))
+isUnboundMetaVar i = use $ subs . at i . to (anyOf folded (== MTVar i))
 
 -- | occurence check. stricter than the one on SPJ 2007 since I make sure all open variables are fresh
-occurCheck :: (MonadError String m, MonadState InferEnv m) => Int -> EMonoType -> m ()
+occurCheck ::
+     (MonadError String m, MonadState InferEnv m) => Int -> EMonoType -> m ()
 occurCheck i t = do
-  t' <- use $ subs . to (\s -> subst s t )
+  t' <- use $ subs . to (\s -> subst s t)
   case elem i (mtftv t') of
     True -> throwError "occurCheck"
     False -> pure ()
 
 -- unifyFunc :: Int -> EType -> EType -> Subs -> Maybe Subs
 -- unifyFunc fc t0 t1 s = evalStateT (unify t0 t1 >> use subs) (IEnv s fc)
-
 utestt0 = TApp (TApp (TVar 0) (TVar 1)) (TVar 0)
 
 utestt1 = TApp (TVar 2) (TVar 1)
@@ -197,8 +191,7 @@ utests = I.fromList [(0, MTVar 0), (1, MTVar 1), (2, MTVar 2), (3, MTVar 3)]
 
 -- | Monadic unification. It doesn't generate new types. Maybe I should refine InferEnv as HasSub
 -- Really should take two MonoTypes
-unify ::
-     (MonadError String m, MonadState InferEnv m) => EType -> EType -> m ()
+unify :: (MonadError String m, MonadState InferEnv m) => EType -> EType -> m ()
 unify t0 t1
   -- handles both meta/non-meta cases
   | TInt <- t0
@@ -208,15 +201,15 @@ unify t0 t1
   , t0 == t1 = pure ()
   -- unequal
   | TVar i0 <- t0 =
-    isMetaVarM i0 >>= \case
+    isMetaVarM i0 >>=
       -- i0 meta
+     \case
       Just t0'
         -- unbound
         | MTVar i0' <- t0'
         , i0' == i0 -> unifyUnboundVar i0 t1
             -- bound
         | otherwise -> unify (t0' ^. re typeMono) t1
-
       -- i0 non-meta
       Nothing
         | TVar i1 <- t1 ->
@@ -240,7 +233,9 @@ unify t0 t1
   -- invariant: none of t0 t1 is a variable
   | TApp t00 t01 <- t0
   , TApp t10 t11 <- t1 = unify t00 t10 >> unify t01 t11
-  | otherwise = throwError "unify catch-all case. probably trying to unify polymorphic types."
+  | otherwise =
+    throwError
+      "unify catch-all case. probably trying to unify polymorphic types."
 
 -- invariant: Var is flexible
 unifyUnboundVar ::
@@ -251,9 +246,11 @@ unifyUnboundVar i0 t1 = do
       s <- use subs
       let t1'' = subst s t1'
       occurCheck i0 t1''
-      subs . mapped %= subst (I.fromList [(i0,t1'')])
+      subs . mapped %= subst (I.fromList [(i0, t1'')])
       subs . at i0 ?= t1''
-    Nothing -> throwError "unable to coerce type to a monotype; this coercion should be removed soon"
+    Nothing ->
+      throwError
+        "unable to coerce type to a monotype; this coercion should be removed soon"
 
 -- unifyVar i0 t1
 --   = isUnboundMetaVar i0 >>=
@@ -287,9 +284,7 @@ tftv t = runReader (act t) []
 -- tgen :: TCtx -> EType -> EType
 -- -- I don't think it is necessary to exclude subs
 -- tgen ctx t = -- L.foldr TForall t ((tftv t L.\\ gftv ctx) L.\\ (subs ^.. folded . _1) )
---   L.foldr TForall t (L.nub $ tftv t L.\\ gftv ctx) 
-
-
+--   L.foldr TForall t (L.nub $ tftv t L.\\ gftv ctx)
 tgen :: (MonadState InferEnv m) => TCtx -> EType -> m EType
 tgen ctx t = do
   s <- use subs
@@ -300,25 +295,19 @@ tgen ctx t = do
 -- | alpha conversion for EType
 etAlpha :: Int -> Int -> EType -> EType
 etAlpha binder freshId = para f
-  where f TIntF = TInt
-        f (TVarF i)
-          | i == binder
-          = TVar freshId
-          | otherwise
-          = TVar i
-        f (TForallF i (old,e0))
-          | i == binder
-          = TForall i old
-          | otherwise
-          = TForall i e0
-        f (TAppF (_,e0) (_,e1))
-          = TApp e0 e1
-
+  where
+    f TIntF = TInt
+    f (TVarF i)
+      | i == binder = TVar freshId
+      | otherwise = TVar i
+    f (TForallF i (old, e0))
+      | i == binder = TForall i old
+      | otherwise = TForall i e0
+    f (TAppF (_, e0) (_, e1)) = TApp e0 e1
 
 -- -- top level infer
 -- infer :: Expr -> EType
--- infer 
-         
+-- infer
 inferType ::
      (MonadError String m, MonadState InferEnv m)
   => TCtx
@@ -337,10 +326,11 @@ inferType ctx actx e
   -- T-LAM2
   | ELam i e' <- e
   -- guessing a random monotype
-   = do iF <- freshVar
+   = do
+    iF <- freshVar
         -- could add a precondition check
-        subs . at iF  ?= MTVar iF
-        TApp (TVar iF) <$> inferType (I.insert i (TVar iF) ctx) actx e'
+    subs . at iF ?= MTVar iF
+    TApp (TVar iF) <$> inferType (I.insert i (TVar iF) ctx) actx e'
   -- T-LAMANN1
   | ELamAnn i t e' <- e
   , [] <- actx
@@ -354,12 +344,12 @@ inferType ctx actx e
   | EApp e0 e1 <- e = do
     a <- inferType ctx [] e1
     b <- tgen ctx a
-    inferType ctx (b : actx) e0 >>=
-      \case TApp _ c -> pure c
-            _ -> throwError "I have no idea how this could happen.."
+    inferType ctx (b : actx) e0 >>= \case
+      TApp _ c -> pure c
+      _ -> throwError "I have no idea how this could happen.."
 
-
-isSubtype :: (MonadState InferEnv m, MonadError String m) => EType -> EType -> m ()
+isSubtype ::
+     (MonadState InferEnv m, MonadError String m) => EType -> EType -> m ()
 isSubtype e0 e1
   -- S-INT
   | TInt <- e0
@@ -367,57 +357,57 @@ isSubtype e0 e1
   -- S-VAR
   | TVar i <- e0
   , TVar i' <- e1
-  , i == i'
-  = pure ()
+  , i == i' = pure ()
   -- S-FORALLR
-  | TForall i e1' <- e1
-  = do b <- freshVar
-       let e1fb = etAlpha i b e1'
-       isSubtype e0 e1fb
-       s <- use subs
-       case tftv (substP s e0) & elem b of
-         True -> throwError "not as polymorphic since a forall variable has been captured"
-         False -> pure ()
+  | TForall i e1' <- e1 = do
+    b <- freshVar
+    let e1fb = etAlpha i b e1'
+    isSubtype e0 e1fb
+    s <- use subs
+    case tftv (substP s e0) & elem b of
+      True ->
+        throwError
+          "not as polymorphic since a forall variable has been captured"
+      False -> pure ()
   -- S-FORALLL
-  | TForall i e0' <- e0
-  = do iF <- freshVar
+  | TForall i e0' <- e0 = do
+    iF <- freshVar
        -- refresh the type variable before opening
-       let e0'' = substP (I.fromList [(i, MTVar iF)]) e0'
+    let e0'' = substP (I.fromList [(i, MTVar iF)]) e0'
        -- extend the substitution environment
-       subs . at iF ?= MTVar iF
-       isSubtype e0'' e1
+    subs . at iF ?= MTVar iF
+    isSubtype e0'' e1
   | TApp t0 t1 <- e0
   , TApp t0' t1' <- e1 = do
-      isSubtype t0' t0 
-      isSubtype t1 t1'
+    isSubtype t0' t0
+    isSubtype t1 t1'
   -- S-FUNL
   | TVar i0 <- e0
-  , TApp t10 t11 <- e1
-  = isMetaVarM i0 >>=
-    \case
-      Just t0
-        -> do t00 <- freshVar
-              t01 <- freshVar
-              subs . at t00 ?= MTVar t00
-              subs . at t01 ?= MTVar t01
-              unify e0 (TApp (TVar t00) (TVar t01))
-              unify e0 e1
-              isSubtype (TApp (TVar t00) (TVar t01)) e1
-      Nothing
-        -> throwError "a forall variable cannot possibly be a subtype of an arrow type"
+  , TApp t10 t11 <- e1 =
+    isMetaVarM i0 >>= \case
+      Just t0 -> do
+        t00 <- freshVar
+        t01 <- freshVar
+        subs . at t00 ?= MTVar t00
+        subs . at t01 ?= MTVar t01
+        unify e0 (TApp (TVar t00) (TVar t01))
+        unify e0 e1
+        isSubtype (TApp (TVar t00) (TVar t01)) e1
+      Nothing ->
+        throwError
+          "a forall variable cannot possibly be a subtype of an arrow type"
   -- S-FUNR
   | TVar i1 <- e1
-  , TApp t00 t01 <- e0
-  = isMetaVarM i1 >>=
-    \case
-      Just t1
-        -> do i10 <- freshVar
-              i11 <- freshVar
-              subs . at i10 ?= MTVar i10
-              subs . at i11 ?= MTVar i11
-              unify e1 (TApp (TVar i10) (TVar i11))
-              unify e0 e1
-              isSubtype e0 (TApp (TVar i10) (TVar i11))
+  , TApp t00 t01 <- e0 =
+    isMetaVarM i1 >>= \case
+      Just t1 -> do
+        i10 <- freshVar
+        i11 <- freshVar
+        subs . at i10 ?= MTVar i10
+        subs . at i11 ?= MTVar i11
+        unify e1 (TApp (TVar i10) (TVar i11))
+        unify e0 e1
+        isSubtype e0 (TApp (TVar i10) (TVar i11))
   | otherwise = unify e0 e1
 
 appSubtype ::
@@ -433,24 +423,27 @@ appSubtype actx t
   -- S-FORALL2
   | _:_ <- actx
   , TForall i t1 <- t = do
-      iF <- freshVar
+    iF <- freshVar
        -- refresh the type variable before opening
-      let t2 = substP (I.fromList [(i, MTVar iF)]) t1
+    let t2 = substP (I.fromList [(i, MTVar iF)]) t1
        -- extend the substitution environment
-      subs . at iF ?= MTVar iF
-      TForall iF <$> appSubtype actx t2
+    subs . at iF ?= MTVar iF
+    TForall iF <$> appSubtype actx t2
   | _:_ <- actx
-  , TVar i <- t
-  = isMetaVarM i >>=
-    \case Nothing -> throwError "appSubtype: cannot unify a forall var with a function type"
-          Just t' -> do
-            i0 <- freshVar
-            i1 <- freshVar
-            subs . at i0 ?= MTVar i0
-            subs . at i1 ?= MTVar i1
-            unify t (TApp (TVar i0) (TVar i1))
-            appSubtype actx (TApp (TVar i0) (TVar i1))
+  , TVar i <- t =
+    isMetaVarM i >>= \case
+      Nothing ->
+        throwError "appSubtype: cannot unify a forall var with a function type"
+      Just t' -> do
+        i0 <- freshVar
+        i1 <- freshVar
+        subs . at i0 ?= MTVar i0
+        subs . at i1 ?= MTVar i1
+        unify t (TApp (TVar i0) (TVar i1))
+        appSubtype actx (TApp (TVar i0) (TVar i1))
   | otherwise = throwError "appSubtype catch-all case"
 
-utestt2 = TForall 0 (TForall 1 (TApp (TApp (TVar 0) (TVar 1)) (TApp (TVar 0) (TVar 1))) )
+utestt2 =
+  TForall 0 (TForall 1 (TApp (TApp (TVar 0) (TVar 1)) (TApp (TVar 0) (TVar 1))))
+
 utestt3 = TForall 0 (TApp (TApp (TVar 0) (TVar 0)) (TApp (TVar 0) (TVar 0)))
