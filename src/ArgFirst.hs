@@ -11,6 +11,7 @@ module ArgFirst where
 
 import Control.Applicative
 import Control.Applicative
+
 -- import Control.Category
 import Control.Lens hiding (para)
 import Control.Monad
@@ -26,8 +27,8 @@ import Data.Maybe
 import Data.Monoid
 import Data.Text.Prettyprint.Doc
 import Debug.Trace
--- import Prelude hiding ((.), id)
 
+-- import Prelude hiding ((.), id)
 type Subs = I.IntMap EMonoType
 
 data Expr
@@ -133,6 +134,39 @@ eCOne = ELam 0 (ELam 1 (EApp (EVar 0) (EVar 1)))
 eCTwo :: Expr
 eCTwo = ELam 0 (ELam 1 (EApp (EVar 0) (EApp (EVar 0) (EVar 1))))
 
+eComp :: Expr
+eComp = ELam 0 (ELam 1 (ELam 2 ((EApp (EVar 0) (EApp (EVar 1) (EVar 2))))))
+
+eK2 :: Expr
+eK2 = ELam 0 (EApp (EApp (EVar 0) eIdInt) (EInt 3))
+
+eCar :: Expr
+eCar = ELam 0 (ELam 1 (EVar 0))
+
+eCdr :: Expr
+eCdr = ELam 0 (ELam 1 (EVar 1))
+
+eInst2Fail :: Expr
+eInst2Fail =
+  EApp
+    eId
+    (ELam
+       0
+       (ELam
+          1
+          (EApp (EApp (EVar 1) (EApp (EVar 0) (EInt 1))) (EApp (EVar 0) eIdInt))))
+
+eInst2Success :: Expr
+eInst2Success =
+  EApp
+    eId
+    (ELamAnn
+       0
+       (TForall 0 (TApp (TVar 0) (TVar 0)))
+       (ELam
+          1
+          (EApp (EApp (EVar 1) (EApp (EVar 0) (EInt 1))) (EApp (EVar 0) eIdInt))))
+
 eCTwoInt :: Expr
 eCTwoInt =
   ELamAnn
@@ -182,7 +216,10 @@ occurCheck i t = do
   t' <- use $ subs . to (\s -> subst s t)
   s <- use subs
   case elem i (mtftv t') of
-    True -> if (t' == MTVar i) then pure () else throwError "occurCheck"
+    True ->
+      if (t' == MTVar i)
+        then pure ()
+        else throwError "occurCheck"
     False -> pure ()
 
 -- unifyFunc :: Int -> EType -> EType -> Subs -> Maybe Subs
@@ -198,7 +235,8 @@ utests = I.fromList [(0, MTVar 0), (1, MTVar 1), (2, MTVar 2), (3, MTVar 3)]
 -- Really should take two MonoTypes
 unify :: (MonadError String m, MonadState InferEnv m) => EType -> EType -> m ()
 unify t0 t1
-  | trace ("unify "++ show (pretty t0)  ++ " "++ show (pretty t1)) False = undefined
+  | trace ("unify " ++ show (pretty t0) ++ " " ++ show (pretty t1)) False =
+    undefined
   -- handles both meta/non-meta cases
   | TInt <- t0
   , TInt <- t1 = pure ()
@@ -247,7 +285,11 @@ unify t0 t1
 unifyUnboundVar ::
      (MonadError String m, MonadState InferEnv m) => Int -> EType -> m ()
 unifyUnboundVar i0 t1 = do
-  case (trace ("unifyUnboundVar " ++ show (pretty $ TVar i0) ++ " " ++ show (pretty t1))t1) ^? typeMono of
+  case (trace
+          ("unifyUnboundVar " ++ show (pretty $ TVar i0) ++ " " ++
+           show (pretty t1))
+          t1) ^?
+       typeMono of
     Just t1' -> do
       s <- use subs
       let t1'' = subst s t1'
@@ -313,47 +355,52 @@ etAlpha binder freshId = para f
 
 tmaxBinder :: EType -> Int
 tmaxBinder = cata f
-  where f (TVarF v) = v
-        f (TAppF i0 i1) = max i0 i1
-        f (TForallF i i1) = max i i1
-        f TIntF = 0
+  where
+    f (TVarF v) = v
+    f (TAppF i0 i1) = max i0 i1
+    f (TForallF i i1) = max i i1
+    f TIntF = 0
 
 emaxBinder :: Expr -> Int
 emaxBinder = cata f
-  where f (EVarF i) = 0
-        f (EIntF _) = 0
-        f (ELamF i i0) = max i i0
-        f (ELamAnnF i t i0) = i0 `max` tmaxBinder t
-        f (EAppF i0 i1) = max i0 i1
+  where
+    f (EVarF i) = 0
+    f (EIntF _) = 0
+    f (ELamF i i0) = max i i0
+    f (ELamAnnF i t i0) = i0 `max` tmaxBinder t
+    f (EAppF i0 i1) = max i0 i1
 
 tuniqueBindM :: (MonadState Int m) => EType -> m EType
 tuniqueBindM = cataA act
-  where act (TAppF e0 e1) = TApp <$> e0 <*> e1
-        act (TForallF i e0) = do
-          iF <- id <+= 1
-          TForall iF <$> (etAlpha i iF <$> e0)
-        act (TVarF i) = pure $ TVar i
-        act TIntF = pure TInt
-
+  where
+    act (TAppF e0 e1) = TApp <$> e0 <*> e1
+    act (TForallF i e0) = do
+      iF <- id <+= 1
+      TForall iF <$> (etAlpha i iF <$> e0)
+    act (TVarF i) = pure $ TVar i
+    act TIntF = pure TInt
 
 etuniqueBindM :: (MonadState Int m) => Expr -> m Expr
 etuniqueBindM = cataA f
-  where f (ELamAnnF i t e) = do
-          ut <- tuniqueBindM t
-          ELamAnn i ut <$> e
-        f (ELamF i e) = ELam i <$> e
-        f (EVarF i) = pure $ EVar i
-        f (EAppF e0 e1) = EApp <$> e0 <*> e1
-        f (EIntF i) = pure $ EInt i
+  where
+    f (ELamAnnF i t e) = do
+      ut <- tuniqueBindM t
+      ELamAnn i ut <$> e
+    f (ELamF i e) = ELam i <$> e
+    f (EVarF i) = pure $ EVar i
+    f (EAppF e0 e1) = EApp <$> e0 <*> e1
+    f (EIntF i) = pure $ EInt i
 
 etuniqueBind :: Expr -> Expr
 etuniqueBind e = evalState (etuniqueBindM e) (emaxBinder e)
 
-
 inferTop :: Expr -> Either String EType
 inferTop e =
-  let (e', imax) = runState (etuniqueBindM e) (emaxBinder e) in
-    runExcept (evalStateT (inferType mempty mempty (EApp eId e')) (IEnv mempty (imax +1)) )
+  let (e', imax) = runState (etuniqueBindM e) (emaxBinder e)
+   in runExcept
+        (evalStateT
+           (inferType mempty mempty (EApp eId e'))
+           (IEnv mempty (imax + 1)))
 
 inferTopP :: Expr -> Either String (Doc ann)
 inferTopP e = inferTop e & _Right %~ pretty
@@ -400,12 +447,15 @@ inferType ctx actx e
     -- let t' = substP s t
     case t of
       TApp _ c -> pure c
-      tt -> throwError ("I have no idea how this could happen.. " ++ show (pretty tt))
+      tt ->
+        throwError
+          ("I have no idea how this could happen.. " ++ show (pretty tt))
 
 isSubtype ::
      (MonadState InferEnv m, MonadError String m) => EType -> EType -> m ()
 isSubtype e0 e1
-  | trace ("isSubtype " ++ show (pretty e0) ++ " " ++ show (pretty e1)) False = undefined
+  | trace ("isSubtype " ++ show (pretty e0) ++ " " ++ show (pretty e1)) False =
+    undefined
   -- S-INT
   | TInt <- e0
   , TInt <- e1 = pure ()
@@ -463,7 +513,9 @@ isSubtype e0 e1
         unify e1 (TApp (TVar i10) (TVar i11))
         unify e0 e1
         isSubtype e0 (TApp (TVar i10) (TVar i11))
-      Nothing -> throwError "a forall variable cannot possibly be a subtype of an arrow type"
+      Nothing ->
+        throwError
+          "a forall variable cannot possibly be a subtype of an arrow type"
   | otherwise = unify e0 e1
 
 appSubtype ::
