@@ -27,6 +27,7 @@ dependencies:
 - mtl
 - lens
 - prettyprinter
+- recursion-schemes
 library:
   source-dirs: src
 
