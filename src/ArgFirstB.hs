@@ -77,6 +77,12 @@ data Expr b a
          (Expr b a)
   deriving (Functor, Foldable, Traversable)
 
+whnf :: Expr b a -> Expr b a
+whnf e
+  | EApp e0 e1 <- e
+  , ELam body <- whnf e0 = whnf $ instantiate1 e1 body
+  | otherwise = e
+
 instance Applicative (Expr b) where
   pure = EVar
   (<*>) = ap
@@ -131,7 +137,6 @@ instance Pretty (EType Int) where
 instance Pretty (EMonoType Int) where
   pretty = views (re typeMono) pretty
 
-
 instance Pretty (Expr Int Int) where
   pretty e = evalState (f e) 0
     where
@@ -141,16 +146,21 @@ instance Pretty (Expr Int Int) where
       f (ELam e) = do
         fv <- id <<+= 1
         p <- f (instantiate1 (EVar fv) e)
-        pure . enclose "(" ")" . align . sep $ [("λ" <+> enclose "[" "]" ("x" <> pretty fv)), p]
+        pure . enclose "(" ")" . align . sep $
+          [("λ" <+> enclose "[" "]" ("x" <> pretty fv)), p]
       f (ELamAnn t e) = do
         fv <- id <<+= 1
         p <- f (instantiate1 (EVar fv) e)
-        pure $ enclose "(" ")" ("λ" <+> enclose "[" "]" ("x" <> pretty fv <+> ":" <+> pretty t) <+> p)
+        pure $
+          enclose
+            "("
+            ")"
+            ("λ" <+> enclose "[" "]" ("x" <> pretty fv <+> ":" <+> pretty t) <+>
+             p)
       f (EApp e0 e1) = do
         p0 <- f e0
         p1 <- f e1
         pure $ enclose "(" ")" $ align $ sep [p0, p1]
-
 
 type Subs = I.IntMap (EMonoType Int)
 
