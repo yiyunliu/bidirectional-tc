@@ -113,7 +113,7 @@ instance Pretty (EType Int) where
         pure $
           case isAtom t0 of
             True -> p0 <+> "->" <+> p1
-            False -> enclose "(" ")" p0 <+> "->" <+> p1
+            False -> align . sep $ [enclose "(" ")" p0, "->", p1]
       f (TForall t) = do
         fv <- id <<+= 1
         p <- f (instantiate1 (TVar fv) t)
@@ -130,6 +130,27 @@ instance Pretty (EType Int) where
 
 instance Pretty (EMonoType Int) where
   pretty = views (re typeMono) pretty
+
+
+instance Pretty (Expr Int Int) where
+  pretty e = evalState (f e) 0
+    where
+      f :: Expr Int Int -> State Int (Doc ann)
+      f (EVar i) = pure $ "x" <> pretty i
+      f (EInt i) = pure $ pretty i
+      f (ELam e) = do
+        fv <- id <<+= 1
+        p <- f (instantiate1 (EVar fv) e)
+        pure . enclose "(" ")" . align . sep $ [("λ" <+> enclose "[" "]" ("x" <> pretty fv)), p]
+      f (ELamAnn t e) = do
+        fv <- id <<+= 1
+        p <- f (instantiate1 (EVar fv) e)
+        pure $ enclose "(" ")" ("λ" <+> enclose "[" "]" ("x" <> pretty fv <+> ":" <+> pretty t) <+> p)
+      f (EApp e0 e1) = do
+        p0 <- f e0
+        p1 <- f e1
+        pure $ enclose "(" ")" $ align $ sep [p0, p1]
+
 
 type Subs = I.IntMap (EMonoType Int)
 
