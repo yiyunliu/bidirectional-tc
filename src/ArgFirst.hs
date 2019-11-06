@@ -20,7 +20,7 @@ import qualified Data.IntMap as I
 import qualified Data.List as L
 import Data.Maybe
 import Data.Text.Prettyprint.Doc
--- import Debug.Trace
+import Debug.Trace
 
 -- import Prelude hiding ((.), id)
 type Subs = I.IntMap EMonoType
@@ -411,7 +411,7 @@ inferType ::
   -> Expr
   -> m EType
 inferType ctx actx e
-  -- | trace ("inferType " ++ show (pretty e)) False = undefined
+  | trace ("inferType " ++ show (pretty e)) False = undefined
   -- T-Var
   | EVar i <- e
   , Just a <- I.lookup i ctx = appSubtype actx a
@@ -455,8 +455,8 @@ inferType ctx actx e
 isSubtype ::
      (MonadState InferEnv m, MonadError String m) => EType -> EType -> m ()
 isSubtype e0 e1
-  -- | trace ("isSubtype " ++ show (pretty e0) ++ " " ++ show (pretty e1)) False =
-  --   undefined
+  | trace ("isSubtype " ++ show (pretty e0) ++ " " ++ show (pretty e1)) False =
+    undefined
   -- S-INT
   | TInt <- e0
   , TInt <- e1 = pure ()
@@ -522,7 +522,7 @@ isSubtype e0 e1
 appSubtype ::
      (MonadError String m, MonadState InferEnv m) => ACtx -> EType -> m EType
 appSubtype actx t
-  -- | trace ("appSubtype " ++ show (pretty t)) False = undefined
+  | trace ("appSubtype " ++ show (pretty t)) False = undefined
   -- S-EMPTY
   | [] <- actx = pure t
   -- S-FUN2
