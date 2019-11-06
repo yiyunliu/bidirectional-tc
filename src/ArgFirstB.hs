@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,12 +15,13 @@ import Bound
 import Control.Lens hiding (para)
 import Control.Monad.Except
 import Control.Monad.State
-import Data.Eq.Deriving (deriveEq1) -- these two are from the
+import Data.Eq.Deriving (deriveEq1)
 import Data.Functor.Foldable.TH
 import qualified Data.IntMap as I
 import qualified Data.IntSet as IS
 import qualified Data.List as L
-import Text.Show.Deriving (deriveShow1) -- deriving-compat package
+import Data.Text.Prettyprint.Doc
+import Text.Show.Deriving (deriveShow1)
 
 data EType a
   = TInt
@@ -101,6 +103,34 @@ makeBaseFunctor ''EType
 
 makeBaseFunctor ''EMonoType
 
+instance Pretty (EType Int) where
+  pretty t = evalState (f t) 0
+    where
+      f TInt = pure "int"
+      f (TApp t0 t1) = do
+        p0 <- f t0
+        p1 <- f t1
+        pure $
+          case isAtom t0 of
+            True -> p0 <+> "->" <+> p1
+            False -> enclose "(" ")" p0 <+> "->" <+> p1
+      f (TForall t) = do
+        fv <- id <<+= 1
+        p <- f (instantiate1 (TVar fv) t)
+        pure $ "∀" <+> ("t" <> pretty fv) <+> "." <+> p
+      f (TVar i) = pure $ "t" <> pretty i
+      -- f (TAppF (tt, t0) (_, t1))
+      --   | isAtom tt = t0 <+> "->" <+> t1
+      --   | otherwise = enclose "(" ")" t0 <+> "->" <+> t1
+      -- f (TForallF i (_, t)) = "∀" <+> ("t" <> pretty i) <+> "." <+> t
+      -- f (TVarF i) = pretty ("t" ++ show i)
+      isAtom TInt = True
+      isAtom (TVar _) = True
+      isAtom _ = False
+
+instance Pretty (EMonoType Int) where
+  pretty = views (re typeMono) pretty
+
 type Subs = I.IntMap (EMonoType Int)
 
 -- | prism that goes back and forth between types and mono types
@@ -136,8 +166,6 @@ eId = lam 0 (EVar 0)
 eIdAnn :: Expr Int Int
 eIdAnn = lamAnn 0 (tforall 0 (TApp (TVar 0) (TVar 0))) (EVar 0)
 
--- eIdAnn' :: Expr b Int
--- eIdAnn' = lamAnn 0 (tforall 0 (TApp (TVar 0) (TVar 0))) (EVar 0)
 eIdInt :: Expr b Int
 eIdInt = lamAnn 0 TInt (EVar 0)
 
@@ -215,17 +243,8 @@ data InferEnv = IEnv
 
 makeLenses ''InferEnv
 
--- Some monadic predicates
--- | v not in subs
-isMetaVar :: MonadState InferEnv m => Int -> m Bool
-isMetaVar i = use $ subs . at i . to (isn't _Nothing)
-
 isMetaVarM :: MonadState InferEnv m => Int -> m (Maybe (EMonoType Int))
 isMetaVarM i = use $ subs . at i
-
--- | v == v in subs
-isUnboundMetaVar :: MonadState InferEnv m => Int -> m Bool
-isUnboundMetaVar i = use $ subs . at i . to (anyOf folded (== MTVar i))
 
 -- | occurence check. stricter than the one on SPJ 2007 since I make sure all open variables are fresh
 occurCheck ::
@@ -325,6 +344,9 @@ tgen ctx t = do
 inferTop :: Expr Int Int -> Either String (EType Int)
 inferTop e =
   runExcept (evalStateT (inferType mempty mempty (EApp eId e)) (IEnv mempty 0))
+
+inferTopP :: Expr Int Int -> Either String (Doc ann)
+inferTopP e = inferTop e & _Right %~ pretty
 
 inferType ::
      (MonadError String m, MonadState InferEnv m)
