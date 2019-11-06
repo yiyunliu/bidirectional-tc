@@ -21,9 +21,6 @@ import qualified Data.IntSet as IS
 import qualified Data.List as L
 import Text.Show.Deriving (deriveShow1) -- deriving-compat package
 
--- import Prelude hiding ((.), id)
--- -- inferTopP :: Expr -> Either String (Doc ann)
--- -- inferTopP e = inferTop e & _Right %~ pretty
 data EType a
   = TInt
   | TApp (EType a)
@@ -106,33 +103,6 @@ makeBaseFunctor ''EMonoType
 
 type Subs = I.IntMap (EMonoType Int)
 
--- -- instance Pretty a => Pretty (EType a) where
--- --   pretty = para f
--- --     where
--- --       f TIntF = "int"
--- --       f (TAppF (tt, t0) (_, t1))
--- --         | isAtom tt = t0 <+> "->" <+> t1
--- --         | otherwise = enclose "(" ")" t0 <+> "->" <+> t1
--- --       f (TForallF i (_, t)) = "∀" <+> ("t" <> pretty i) <+> "." <+> t
--- --       f (TVarF i) = "t" <> pretty i
--- --       isAtom TInt = True
--- --       isAtom (TVar _) = True
--- --       isAtom _ = False
--- -- instance Pretty a => Pretty (EMonoType a) where
--- --   pretty = views (re typeMono) pretty
--- -- instance Pretty a => Pretty (Expr a) where
--- --   pretty = cata f
--- --     where
--- --       f (EVarF i) = "x" <> pretty i
--- --       f (EIntF i) = pretty i
--- --       f (ELamF i e) =
--- --         enclose "(" ")" ("λ" <+> enclose "[" "]" ("x" <> pretty i) <+> e)
--- --       f (ELamAnnF i t e) =
--- --         enclose
--- --           "("
--- --           ")"
--- --           ("λ" <+> enclose "[" "]" ("x" <> pretty i <+> ":" <+> pretty t) <+> e)
--- --       f (EAppF e0 e1) = enclose "(" ")" (e0 <+> e1)
 -- | prism that goes back and forth between types and mono types
 typeMono :: Prism' (EType a) (EMonoType a)
 typeMono = prism' inj proj
